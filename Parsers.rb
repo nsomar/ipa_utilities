@@ -1,50 +1,3 @@
-require 'cfpropertylist'
-require 'pathname'
-require 'base64'
-require 'colorize'
-
-class IpaVerifier
-  attr :provisionParser
-
-  def initialize ipaPath
-    pn = Pathname.new(ipaPath)
-    @ipaPath = pn.dirname
-    @ipaName = pn.basename
-    @fullPath = ipaPath
-    prepare
-    parse
-  end
-
-  def prepare
-    # unzip
-    say "Unzipping " + @fullPath.green if $verbose
-
-    system "unzip #{@fullPath} > log.txt"
-    @bundleName = Dir.entries("Payload").last
-
-    say "App bundle name is " + @bundleName.green if $verbose
-  end
-
-  def verifyCodeSign
-    result = `codesign -v Payload/#{@bundleName} 2>&1`
-    result.empty? ? "Signature Valid\n".green : "Signature Not Valid\n".red + result.red if $verbose
-  end
-
-  def parse
-    provisionPath = "Payload/#{@bundleName}/embedded.mobileprovision"
-    @provisionParser = ProvisionParser.new provisionPath
-
-    say "Reading provision profile at "+ provisionPath.green if $verbose
-    puts if $verbose
-  end
-
-  def cleanUp
-    # Cleanup
-    system "rm -rf Payload"
-    system "rm -rf tmp.plist"
-  end
-end
-
 class PemParser
 
   def initialize file
@@ -91,7 +44,6 @@ class PemParser
     identity = /CN=(.*?),/.match(pem).captures
     identity
   end
-
 end
 
 class ProvisionParser
@@ -156,6 +108,14 @@ class ProvisionParser
     var
   end
 
+  def teamName
+    @data["TeamName"]
+  end
+
+  def teamIdentifier
+    @data["Entitlements"]["com.apple.developer.team-identifier"]
+  end
+
   def apnsEnviroment
     isAPNSProduction ? "Production" : "Development (Sandbox)"
   end
@@ -167,5 +127,4 @@ class ProvisionParser
       "Development"
     end
   end
-
 end

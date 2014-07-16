@@ -3,7 +3,7 @@
 require 'rubygems'
 require 'commander/import'
 require 'colorize'
-require './IpaVerifier'
+require './IpaUtilities'
 
 HighLine.track_eof = false # Fix for built-in Ruby
 Signal.trap("INT") {} # Suppress backtrace when exiting command
@@ -30,16 +30,8 @@ command :verify do |c|
 
   c.action do |args, options|
 
-    if args.nil? || args.empty?
-      say_error "Path to ipa is required"
-      exit
-    end
-
-    path = args.first
-    if !File.exist?path
-      say_error "Couldn't find ipa with path #{path}"
-      exit
-    end
+    path = checkArgs args, "ipa"
+    exit unless path
 
     certificate = options.certificate
     device = options.device
@@ -48,7 +40,9 @@ command :verify do |c|
       errors = 0
       puts
 
-      ipa = IpaVerifier.new path
+      ipa = IpaUtilities.new path
+      ipa.unzipAndParse
+
       parser = ipa.provisionParser
 
       puts "Reading general information"
@@ -140,16 +134,8 @@ command :convert do |c|
 
   c.action do |args, options|
 
-    if args.nil? || args.empty?
-      say_error "Path to p12 is required"
-      exit
-    end
-
-    path = args.first
-    if !File.exist?path
-      say_error "Couldn't find p12 with path #{path}"
-      exit
-    end
+    path = checkArgs args, "p12"
+    exit unless path
 
     outpath = options.out || "~/Desktop/out.pem"
 
@@ -158,7 +144,7 @@ command :convert do |c|
       puts
       puts "Converting P12 to Pem"
       system "openssl pkcs12 -in #{path} -out #{outpath} -nodes -clcerts"
-      puts "Pem saved at #{outpath}"
+      puts "Pem saved at " + outpath.green
 
     ensure
 
@@ -174,23 +160,14 @@ command :certificate do |c|
 
   c.action do |args, options|
 
-    if args.nil? || args.empty?
-      say_error "Path to ipa is required"
-      exit
-    end
-
-    path = args.first
-    if !File.exist?path
-      say_error "Couldn't find ipa with path #{path}"
-      exit
-    end
-
-    # outpath = options.out || "~/Desktop/out.pem"
+    path = checkArgs args, "ipa"
+    exit unless path
 
     begin
       #Todo
       puts
-      ipa = IpaVerifier.new path
+      ipa = IpaUtilities.new path
+      ipa.unzipAndParse
       parser = ipa.provisionParser
 
       apnsEnviroment = parser.isAPNSProduction ? "Production" : "Development"
@@ -202,14 +179,83 @@ command :certificate do |c|
       puts "Item found please export it from your keychain".green if identities.lines.index{|s| s.include?(identityName)}
       puts "Item couldnt be found in your keychain".red if !identities.lines.index{|s| s.include?(identityName)}
 
-      # certificates = `security find-certificate -c '#{identityName}' -p`
-      # puts certificates
+    ensure
+      ipa.cleanUp
+    end
+  end
+end
 
-      # system "get-identity-preference -s ssl-client"
-      # puts "Certificate Saved to " + outpath.green
+command :resign do |c|
+  c.syntax = 'ipa_utils resign ipa -c new_profile'
+  c.summary = 'Resigns the passed ipa to the new passed profile'
+
+  c.example 'description', 'ipa_utils certificate ipa_path -c profile'
+  c.option '-p', '--profile profile', 'Path of the provision profile to use'
+  c.option '-o', '--out outpath', 'Out put file for the Pem file'
+
+  c.action do |args, options|
+
+    puts
+
+    path = checkArgs args, "ipa"
+    exit unless path
+
+    profile = options.profile
+    if !profile
+      say_error "pass a profile with -p profile-path"
+      exit
+    end
+
+    exit unless checkFileExists "provision profile", profile
+
+    outpath = options.out || "~/Desktop/resigned.ipa"
+
+    begin
+
+      ipa = IpaUtilities.new path
+
+      ipa.unzipAndParse
+      ipa.deleteOldSignature
+
+      parser = ipa.provisionParser
+
+      puts "Copying the new provision profile to app bundle"
+      system "cp \"#{profile}\" \"Payload/#{ipa.bundleName}/embedded.mobileprovision\""
+
+      file = File.read "Original.Entitlements.plist"
+      file.sub! "BUNDLE_ID", "#{parser.teamIdentifier}.#{parser.appBundleID}"
+      file.sub! "GET_TASK_ALLOW", parser.isBuildRelease ? "false" : "true"
+
+      puts "Writing Entitlements.plist"
+      File.write "Entitlements.plist", file
+
+      buildName = parser.isBuildRelease ? "Distribution" : "Development"
+      system "codesign -s \"iPhone #{buildName}: #{parser.teamName} (#{parser.teamIdentifier})\" --entitlements Entitlements.plist \"Payload/DummyApp.app\" -f"
+
+      puts
+      ipa.zip outpath
 
     ensure
       ipa.cleanUp
     end
   end
+end
+
+def checkArgs args, title
+  if args.nil? || args.empty?
+    say_error "Path to #{title} is required"
+    return nil
+  end
+
+  checkFileExists title, args.first
+end
+
+def checkFileExists title, path
+
+  if !File.exist?path
+    say_error "Couldn't find #{title} with path #{path}"
+    return nil
+  end
+
+  path
 end
