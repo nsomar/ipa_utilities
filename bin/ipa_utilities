@@ -1,14 +1,13 @@
 #!/usr/bin/env ruby
 
-require 'rubygems'
 require 'commander/import'
 require 'colorize'
-require './IpaUtilities'
+require 'ipa_utilities'
 
-HighLine.track_eof = false # Fix for built-in Ruby
-Signal.trap("INT") {} # Suppress backtrace when exiting command
+HighLine.track_eof = false
+Signal.trap("INT") {}
 
-program :version, '0.0.1'
+program :version, IpaVersion::VERSION
 program :description, 'A command-line interface for dealing with ipas'
 
 program :help, 'Author', 'Omar Abdelhafith <o.arrabi@me.com>'
@@ -186,10 +185,10 @@ command :certificate do |c|
 end
 
 command :resign do |c|
-  c.syntax = 'ipa_utils resign ipa -c new_profile'
+  c.syntax = 'ipa_utils resign ipa -p new_profile'
   c.summary = 'Resigns the passed ipa to the new passed profile'
 
-  c.example 'description', 'ipa_utils certificate ipa_path -c profile'
+  c.example 'description', 'ipa_utils certificate ipa_path -p profile'
   c.option '-p', '--profile profile', 'Path of the provision profile to use'
   c.option '-o', '--out outpath', 'Out put file for the Pem file'
 
@@ -222,12 +221,8 @@ command :resign do |c|
       puts "Copying the new provision profile to app bundle"
       system "cp \"#{profile}\" \"Payload/#{ipa.bundleName}/embedded.mobileprovision\""
 
-      file = File.read "Original.Entitlements.plist"
-      file.sub! "BUNDLE_ID", "#{parser.teamIdentifier}.#{parser.appBundleID}"
-      file.sub! "GET_TASK_ALLOW", parser.isBuildRelease ? "false" : "true"
-
       puts "Writing Entitlements.plist"
-      File.write "Entitlements.plist", file
+      File.write "Entitlements.plist", parser.entitlementForSigning
 
       buildName = parser.isBuildRelease ? "Distribution" : "Development"
       system "codesign -s \"iPhone #{buildName}: #{parser.teamName} (#{parser.teamIdentifier})\" --entitlements Entitlements.plist \"Payload/DummyApp.app\" -f"

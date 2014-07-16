@@ -2,7 +2,7 @@ require 'cfpropertylist'
 require 'pathname'
 require 'base64'
 require 'colorize'
-require './Parsers'
+require 'ipa_utilities/Parsers'
 
 class IpaUtilities
   attr :provisionParser

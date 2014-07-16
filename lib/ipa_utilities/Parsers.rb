@@ -127,4 +127,12 @@ class ProvisionParser
       "Development"
     end
   end
+
+  def entitlementForSigning
+    filePath = File.expand_path "#{__FILE__}/../../resources/Original.Entitlements.plist"
+    file = File.read filePath
+    file.sub! "BUNDLE_ID", "#{teamIdentifier}.#{appBundleID}"
+    file.sub! "GET_TASK_ALLOW", isBuildRelease ? "false" : "true"
+  end
+
 end
