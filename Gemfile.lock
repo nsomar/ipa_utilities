@@ -1,0 +1,18 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    CFPropertyList (2.2.8)
+    colorize (0.7.3)
+    commander (4.2.0)
+      highline (~> 1.6.11)
+    highline (1.6.21)
+    json (1.8.1)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  CFPropertyList
+  colorize
+  commander
+  json
