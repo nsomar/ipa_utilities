@@ -9,7 +9,7 @@ HighLine.track_eof = false # Fix for built-in Ruby
 Signal.trap("INT") {} # Suppress backtrace when exiting command
 
 program :version, '0.0.1'
-program :description, 'A command-line interface for verifying ipa'
+program :description, 'A command-line interface for dealing with ipas'
 
 program :help, 'Author', 'Omar Abdelhafith <o.arrabi@me.com>'
 program :help, 'Website', 'http://nsomar.com'
@@ -20,11 +20,11 @@ $verbose = true
 
 default_command :help
 
-command :ipa do |c|
-  c.syntax = 'ipa_verify ipa [...] ipa_path'
+command :verify do |c|
+  c.syntax = 'ipa_utils verify ipa_path [...]'
   c.summary = 'Verifies the ipa provision and signature information'
 
-  c.example 'description', 'ipa_verify ipa ipa_path'
+  c.example 'description', 'ipa_utils verify ipa_path'
   c.option '-c', '--certificate certificate', 'Path of the push notification PEM certificate'
   c.option '-d', '--device udid', 'UDID of device to check if its included in embedded provision profile'
 
@@ -72,7 +72,6 @@ command :ipa do |c|
         puts "The application was build with get-task-allow set to #{appStatus} while the aps-environment is set to #{apnStatus}, To fix this issue regenerated the provision profile from apple developer then rebuild the app using it".red
         errors += 1
       end
-
 
       if certificate
         puts
@@ -129,5 +128,88 @@ command :ipa do |c|
       ipa.cleanUp
     end
   end
+end
 
+command :convert do |c|
+  c.syntax = 'ipa_utils convert p12_path [...]'
+  c.summary = 'Convert a p12 to PEM'
+
+  c.example 'description', 'ipa_utils convert p12_file_path'
+  c.option '-o', '--out outpath', 'Out put file for the Pem file'
+  # c.option '-d', '--device udid', 'UDID of device to check if its included in embedded provision profile'
+
+  c.action do |args, options|
+
+    if args.nil? || args.empty?
+      say_error "Path to p12 is required"
+      exit
+    end
+
+    path = args.first
+    if !File.exist?path
+      say_error "Couldn't find p12 with path #{path}"
+      exit
+    end
+
+    outpath = options.out || "~/Desktop/out.pem"
+
+    begin
+
+      puts
+      puts "Converting P12 to Pem"
+      system "openssl pkcs12 -in #{path} -out #{outpath} -nodes -clcerts"
+      puts "Pem saved at #{outpath}"
+
+    ensure
+
+    end
+  end
+end
+
+command :certificate do |c|
+  c.syntax = 'ipa_utils certificate ipa [...]'
+  c.summary = 'fetch the correct push identity from the provided ipa (WIP)'
+
+  c.example 'description', 'ipa_utils certificate ipa_path (WIP)'
+
+  c.action do |args, options|
+
+    if args.nil? || args.empty?
+      say_error "Path to ipa is required"
+      exit
+    end
+
+    path = args.first
+    if !File.exist?path
+      say_error "Couldn't find ipa with path #{path}"
+      exit
+    end
+
+    # outpath = options.out || "~/Desktop/out.pem"
+
+    begin
+      #Todo
+      puts
+      ipa = IpaVerifier.new path
+      parser = ipa.provisionParser
+
+      apnsEnviroment = parser.isAPNSProduction ? "Production" : "Development"
+      identityName = "Apple #{apnsEnviroment} IOS Push Services: #{parser.appBundleID}"
+
+      puts "Searching Keychain for identity " + identityName.green
+
+      identities = `security find-identity -v -p ssl-client`
+      puts "Item found please export it from your keychain".green if identities.lines.index{|s| s.include?(identityName)}
+      puts "Item couldnt be found in your keychain".red if !identities.lines.index{|s| s.include?(identityName)}
+
+      # certificates = `security find-certificate -c '#{identityName}' -p`
+      # puts certificates
+
+      # system "get-identity-preference -s ssl-client"
+      # puts "Certificate Saved to " + outpath.green
+
+    ensure
+      ipa.cleanUp
+    end
+  end
 end
