@@ -18,6 +18,6 @@ Gem::Specification.new do |s|
   s.add_dependency "CFPropertyList", '~> 2.2'
   s.add_dependency "colorize", '~> 0.7'
 
-  s.homepage    = 'http://nsomar.com'
+  s.homepage    = 'http://nsomar.com/ipa-utilities/'
   s.license     = 'MIT'
 end
