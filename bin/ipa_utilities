@@ -34,7 +34,7 @@ command :verify do |c|
       ipa = IpaParser.new(parse_path(args, "ipa"))
 
       print_app_bundle(ipa)
-      print_provision_profile(ipa.provision_profile)
+      print_provision_profile(ipa.provision_profile, ipa.info_plist)
       verify_certificates(ipa.provision_profile, options.certificate) if options.certificate
       print_provisioned_devices(ipa.provision_profile) if options.devices
       search_udid(ipa.provision_profile, options.device) if options.device
@@ -63,10 +63,9 @@ command :convert do |c|
 
     begin
 
-      puts
-      puts "Converting P12 to Pem"
+      puts "\nConverting P12 to Pem"
       system "openssl pkcs12 -in #{path} -out #{output_path} -nodes -clcerts"
-      puts "Pem saved at " + output_path.green
+      output("Pem saved at ", output_path)
 
     ensure
 
@@ -91,9 +90,10 @@ command :certificate do |c|
       apns_environment = ipa.provision_profile.production_apns? ? "Production" : "Development"
       identity_name = "Apple #{apns_environment} IOS Push Services: #{ipa.provision_profile.bundle_id}"
 
-      puts "Searching Keychain for identity " + identity_name.green
+      output("Searching Keychain for identity ", identity_name)
 
       identities = `security find-identity -v -p ssl-client`
+
       if identities.lines.index { |s| s.include?(identity_name) }
         puts "Item found please export it from your keychain".green
       else
@@ -111,40 +111,25 @@ command :resign do |c|
 
   c.example 'description', 'ipa_utilities certificate ipa_path -p profile'
   c.option '-p', '--profile profile_path', 'Path of the provision profile to use'
+  c.option '-i', '--identity Identity_name', 'The identity name'
+  c.option '-b', '--bundle bundle_identifier', 'The new bundle identifier'
   c.option '-o', '--out output_path', 'Out put file for the Pem file'
 
   c.action do |args, options|
     begin
       path = parse_path(args, "ipa")
 
-      unless options.profile
-        say_error "pass a profile with -p profile_path"
-        exit
-      end
+      raise "identity name is required with -i" unless options.identity
 
-      profile = parse_path([options.profile], "provision profile")
+      signer = CodeSigner.new(ipa_path: path,
+                              identity: options.identity,
+                              profile: options.profile,
+                              bundle_id: options.bundle,
+                              output_path: options.out)
+      signer.resign
 
-      output_path = options.out || "~/Desktop/resigned.ipa"
-
-      ipa = IpaParser.new(path)
-      ipa.delete_old_signature
-
-      parser = ipa.provision_parser
-
-      puts "Copying the new provision profile to app bundle"
-      system "cp \"#{profile}\" \"Payload/#{ipa.bundle_name}/embedded.mobileprovision\""
-
-      puts "Writing Entitlements.plist"
-      File.write "Entitlements.plist", parser.signing_entitlement
-
-      build_name = parser.release_build? ? "Distribution" : "Development"
-      system "codesign -s \"iPhone #{build_name}: #{parser.team_name} (#{parser.team_identifier})\" --entitlements Entitlements.plist \"Payload/DummyApp.app\" -f"
-
-      puts
-      ipa.zip output_path
-
-    ensure
-      ipa.cleanup
+    rescue Exception => err
+      say_error err.message
     end
   end
 end
@@ -159,9 +144,11 @@ end
 
 def print_app_bundle(ipa)
   puts "______Bundle information______"
-  puts "App bundle name: " + ipa.bundle_name.green
-  print "Verifying app bundle signature: "
-  say ipa.signature_valid? ? "Signature Valid".green : "Signature Not Valid".red + result.red
+  output("App bundle name: ", ipa.bundle_name)
+  output("App display name: ", ipa.info_plist.display_name)
+  output("Verifying app bundle signature: ", "Signature Valid", "Signature Not Valid",
+         CodeSigner.signature_valid?(ipa))
+
 end
 
 def verify_certificates(provision_profile, apns_certificate_path)
@@ -170,16 +157,15 @@ def verify_certificates(provision_profile, apns_certificate_path)
   apns_certificate = SigningIdentity.new(apns_certificate_path)
 
   if apns_certificate.apns?
-    puts "Certificate Name " + apns_certificate.name.green
-    puts "Certificate Environment: " + "#{apns_certificate.environment}".green
-    puts "Certificate Bundle ID: " + "#{apns_certificate.bundle_id}".green
+    output("Certificate name: ", apns_certificate.name)
+    output("Certificate environment: ", apns_certificate.environment)
+    output("Certificate bundle id: ", apns_certificate.bundle_id)
 
-    str = apns_certificate.bundle_id == provision_profile.bundle_id ? "Yes".green : "No".red
-    puts "Certificate bundleId identical to App bundleId  #{str}"
+    output("Certificate bundleId identical to App bundleId: ", "Yes", "No",
+           apns_certificate.bundle_id == provision_profile.bundle_id)
 
     same_environment = apns_certificate.production? == provision_profile.production_apns?
-    str = same_environment ? "Yes".green : "No".red
-    puts "Provided certificate correct for the ipa: #{str}"
+    output("Provided certificate correct for the ipa: ", "Yes", "No", same_environment)
 
     unless same_environment
       puts %{\
@@ -201,38 +187,63 @@ def search_udid(provision_profile, device_udid)
   if provision_profile.app_store_build?
     puts "Distribution build do not contain provisioned devices".red
   else
-    puts "Embedded provision profile contains " + "#{provision_profile.provisioned_devices.count}".green + " devices"
-    puts provision_profile.provisioned_devices.include?(device_udid) ?
-             "Device with UDID `#{device_udid}` found".green :
-             "Device with UDID `#{device_udid}` not found".red
+    output("Number of embedded devices: ", provision_profile.provisioned_devices.count.to_s)
+    output("Device with UDID `#{device_udid}`: ", "Yes", "No",
+           provision_profile.provisioned_devices.include?(device_udid))
   end
 end
 
 def print_provisioned_devices(provision_profile)
   puts "\n______Provisioned devices______"
 
-  puts "Embedded provision profile contains " + "#{provision_profile.provisioned_devices.count}".green + " devices"
+  output("Number of embedded devices: ", provision_profile.provisioned_devices.count.to_s)
   puts provision_profile.provisioned_devices
 end
 
-def print_provision_profile(provision_profile)
+def check_bundle_id(provision_profile, info_plist)
+  output("InfoPlist App bundle id: ", info_plist.bundle_id)
+  output("Profile App bundle id: ", provision_profile.bundle_id)
+  output("InfoPlist bundle id matches Profile bundle id: ", "Yes", "No",
+         info_plist.bundle_id == provision_profile.bundle_id)
+end
+
+def print_provision_profile(provision_profile, info_plist)
   puts "\n______Provision profile information______"
-  puts "App bundle id: " + provision_profile.bundle_id.green
-  puts "Team name: " + provision_profile.team_name.green
-  puts "Profile display name: " + provision_profile.display_name.green
+  output("Team name: ", provision_profile.team_name)
+  output("Profile display name: ", provision_profile.display_name)
+  check_bundle_id(provision_profile, info_plist)
 
   puts "\n______Build environments______"
-  puts "App environment: " + provision_profile.build_environment.green
-  puts "APNS environment: " + provision_profile.apns_environment.green
+  output("App environment: ", provision_profile.build_environment)
+  output("APNS environment: ", provision_profile.apns_environment)
 
-  str = provision_profile.apns_and_app_same_environment? ? "Yes".green : "No".red
-  puts "App and APNS on same environment: " + str
+  output("App and APNS on same environment: ", "Yes", "No",
+         provision_profile.apns_and_app_same_environment?)
 
-  puts "APNS connection gateway: " + provision_profile.apns_gateway.green
+  output("APNS connection gateway: ", provision_profile.apns_gateway)
+
   unless provision_profile.apns_and_app_same_environment?
     puts %{\
 The application was build with get-task-allow set to `#{provision_profile.task_allow?}` while \
 the aps-environment is set to `#{provision_profile.apns_environment}`, To fix this issue regenerated \
 the provision profile from apple developer then rebuild the app using it}.red
   end
+end
+
+def output(*args)
+  label = args.first
+
+  if args.count == 2
+    success_string = failure_string = args[1]
+    status = true
+  elsif args.count == 3
+    success_string = failure_string = args[1]
+    status = args[2]
+  elsif args.count == 4
+    success_string = args[1]
+    failure_string = args[2]
+    status = args[3]
+  end
+
+  puts label + (status ? success_string.green : failure_string.red)
 end

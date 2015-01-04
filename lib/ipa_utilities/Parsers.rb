@@ -125,11 +125,14 @@ class ProvisionProfile
     end
   end
 
-  def signing_entitlement
+  def signing_entitlement(new_bundle_id)
+    bundle_to_write = "#{team_identifier}.#{new_bundle_id || bundle_id}"
+    puts "Bundle identifier: #{bundle_to_write}"
+
     file_path = File.expand_path("#{__FILE__}/../../resources/Original.Entitlements.plist")
     file = File.read(file_path)
-    file.sub! "BUNDLE_ID", "#{team_identifier}.#{bundle_id}"
-    file.sub! "GET_TASK_ALLOW", release_build? ? "false" : "true"
+    file.sub!("BUNDLE_ID", bundle_to_write)
+    file.sub!("GET_TASK_ALLOW", release_build? ? "false" : "true")
   end
 
   private
