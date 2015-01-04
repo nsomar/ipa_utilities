@@ -7,6 +7,10 @@ require 'ipa_utilities'
 HighLine.track_eof = false
 Signal.trap("INT") {}
 
+$verbose = false
+global_option('--verbose') { $verbose = true }
+
+
 program :version, IpaVersion::VERSION
 program :description, 'A command-line interface for dealing with ipas'
 
@@ -14,136 +18,55 @@ program :help, 'Author', 'Omar Abdelhafith <o.arrabi@me.com>'
 program :help, 'Website', 'http://nsomar.com'
 program :help_formatter, :compact
 
-global_option('--verbose') { $verbose = true }
-$verbose = true
-
 default_command :help
 
 command :verify do |c|
-  c.syntax = 'ipa_utils verify ipa_path [...]'
+  c.syntax = 'ipa_utilities verify ipa_path [...]'
   c.summary = 'Verifies the ipa provision and signature information'
 
-  c.example 'description', 'ipa_utils verify ipa_path'
+  c.example 'description', 'ipa_utilities verify ipa_path'
   c.option '-c', '--certificate certificate', 'Path of the push notification PEM certificate'
-  c.option '-d', '--device udid', 'UDID of device to check if its included in embedded provision profile'
+  c.option '-d', '--device UDID', 'UDID of device to check if its included in embedded provision profile'
+  c.option '--devices', 'Show all the devices included in the provision profile'
 
   c.action do |args, options|
-
-    path = checkArgs args, "ipa"
-    exit unless path
-
-    certificate = options.certificate
-    device = options.device
-
     begin
-      errors = 0
-      puts
+      ipa = IpaParser.new(parse_path(args, "ipa"))
 
-      ipa = IpaUtilities.new path
-      ipa.unzipAndParse
+      print_app_bundle(ipa)
+      print_provision_profile(ipa.provision_profile)
+      verify_certificates(ipa.provision_profile, options.certificate) if options.certificate
+      print_provisioned_devices(ipa.provision_profile) if options.devices
+      search_udid(ipa.provision_profile, options.device) if options.device
 
-      parser = ipa.provisionParser
-
-      puts "Reading general information"
-      puts "Application Bundle ID " + parser.appBundleID.green
-      puts "APNS Enviroment: " + parser.apnsEnviroment.green
-      puts "App Enviroment: " + parser.buildEnviroment.green
-      puts
-
-      puts "Verifying bundle signature " + ipa.verifyCodeSign
-
-      status = parser.isAPNSandAppSameEnviroment ? "Yes".green : "No".red
-      puts "Checking embedde provision profile APNS Entitlement vs App enviroments"
-      puts "Is App and APNS on same enviroment: " + status
-
-      if parser.isAPNSandAppSameEnviroment
-        gateway = parser.isAPNSProduction ? "gateway.push.apple.com:2195".green : "gateway.sandbox.push.apple.com:2195".green
-        puts "APNS connection gateway: " + gateway
-      else
-        appStatus = parser.isBuildRelease ? "false (Release)" : "true (debug)"
-        apnStatus = parser.apnsEnviroment
-        puts "The application was build with get-task-allow set to #{appStatus} while the aps-environment is set to #{apnStatus}, To fix this issue regenerated the provision profile from apple developer then rebuild the app using it".red
-        errors += 1
-      end
-
-      if certificate
-        puts
-        puts "Checking certificates"
-        # puts parser.signingIdentities
-        pem = PemParser.new certificate
-
-        if pem.isAPNS
-          puts "Certificate Name " + pem.name.green
-          puts "Certificate Enviroment: " + "#{pem.enviroment}".green
-          puts "Certificate Bundle ID: " + "#{pem.bundleID}".green
-
-          status = parser.appBundleID == pem.bundleID ? "Yes".green : "No".red
-          errors += 1 if parser.appBundleID != pem.bundleID
-
-          puts "Certificate bundleId identical to app #{status}"
-
-          status = pem.isProduction == parser.isAPNSProduction ? "Yes".green : "No".red
-          puts "Is provided certificate correct for passed ipa: " + status
-
-          if pem.isProduction != parser.isAPNSProduction
-            puts "The application was build with a provision profile containing aps-environment in #{apnStatus} enviroment while the passed certificate environment is set to #{pem.enviroment}\nTo fix this issue either export the correct iOS Push #{pem.enviroment} certificate from keychain or rebuild your app with the correct provision profile".red
-            errors += 1
-          end
-        else
-          apnStatus = parser.apnsEnviroment
-          puts "The passed certificate is not an APNS certificate".red
-          errors += 1
-        end
-
-      end
-
-      if device
-        puts
-        puts "Checking provisioned devices"
-
-        if parser.isBuildDistro
-          puts "Distribution build do not contain provisioned devices".red
-          errors += 1
-        else
-          puts "Embedded profile contains " + "#{parser.provisionedDevices.count}".green + " devices"
-          status = parser.provisionedDevices.include?(device) ? "Device with UDID #{device} found".green :
-            "Device with UDID #{device} not found".red
-          puts status
-          errors += 1 if !parser.provisionedDevices.include?(device)
-        end
-      end
-
-      puts
-      puts "No errors encountered".green if errors == 0
-      puts "#{errors} errors encountered!".red if errors > 0
-
+    rescue Exception => err
+      say_error err.message
     ensure
-      ipa.cleanUp
+      ipa.cleanup
     end
   end
 end
 
 command :convert do |c|
-  c.syntax = 'ipa_utils convert p12_path [...]'
+  c.syntax = 'ipa_utilities convert p12_path [...]'
   c.summary = 'Convert a p12 to PEM'
 
-  c.example 'description', 'ipa_utils convert p12_file_path'
-  c.option '-o', '--out outpath', 'Out put file for the Pem file'
-  # c.option '-d', '--device udid', 'UDID of device to check if its included in embedded provision profile'
+  c.example 'description', 'ipa_utilities convert p12_file_path'
+  c.option '-o', '--out output_path', 'Out put file for the Pem file'
 
   c.action do |args, options|
 
-    path = checkArgs args, "p12"
+    path = parse_path(args, "p12")
     exit unless path
 
-    outpath = options.out || "~/Desktop/out.pem"
+    output_path = options.out || "~/Desktop/out.pem"
 
     begin
 
       puts
       puts "Converting P12 to Pem"
-      system "openssl pkcs12 -in #{path} -out #{outpath} -nodes -clcerts"
-      puts "Pem saved at " + outpath.green
+      system "openssl pkcs12 -in #{path} -out #{output_path} -nodes -clcerts"
+      puts "Pem saved at " + output_path.green
 
     ensure
 
@@ -152,105 +75,164 @@ command :convert do |c|
 end
 
 command :certificate do |c|
-  c.syntax = 'ipa_utils certificate ipa [...]'
+  c.syntax = 'ipa_utilities certificate ipa [...]'
   c.summary = 'fetch the correct push identity from the provided ipa (WIP)'
 
-  c.example 'description', 'ipa_utils certificate ipa_path (WIP)'
+  c.example 'description', 'ipa_utilities certificate ipa_path (WIP)'
 
   c.action do |args, options|
 
-    path = checkArgs args, "ipa"
+    path = parse_path args, "ipa"
     exit unless path
 
     begin
-      #Todo
-      puts
-      ipa = IpaUtilities.new path
-      ipa.unzipAndParse
-      parser = ipa.provisionParser
+      ipa = IpaParser.new path
 
-      apnsEnviroment = parser.isAPNSProduction ? "Production" : "Development"
-      identityName = "Apple #{apnsEnviroment} IOS Push Services: #{parser.appBundleID}"
+      apns_environment = ipa.provision_profile.production_apns? ? "Production" : "Development"
+      identity_name = "Apple #{apns_environment} IOS Push Services: #{ipa.provision_profile.bundle_id}"
 
-      puts "Searching Keychain for identity " + identityName.green
+      puts "Searching Keychain for identity " + identity_name.green
 
       identities = `security find-identity -v -p ssl-client`
-      puts "Item found please export it from your keychain".green if identities.lines.index{|s| s.include?(identityName)}
-      puts "Item couldnt be found in your keychain".red if !identities.lines.index{|s| s.include?(identityName)}
-
+      if identities.lines.index { |s| s.include?(identity_name) }
+        puts "Item found please export it from your keychain".green
+      else
+        puts "Item couldn't be found in your keychain".red
+      end
     ensure
-      ipa.cleanUp
+      ipa.cleanup
     end
   end
 end
 
 command :resign do |c|
-  c.syntax = 'ipa_utils resign ipa -p new_profile'
+  c.syntax = 'ipa_utilities resign ipa -p new_profile'
   c.summary = 'Resigns the passed ipa to the new passed profile'
 
-  c.example 'description', 'ipa_utils certificate ipa_path -p profile'
-  c.option '-p', '--profile profile', 'Path of the provision profile to use'
-  c.option '-o', '--out outpath', 'Out put file for the Pem file'
+  c.example 'description', 'ipa_utilities certificate ipa_path -p profile'
+  c.option '-p', '--profile profile_path', 'Path of the provision profile to use'
+  c.option '-o', '--out output_path', 'Out put file for the Pem file'
 
   c.action do |args, options|
-
-    puts
-
-    path = checkArgs args, "ipa"
-    exit unless path
-
-    profile = options.profile
-    if !profile
-      say_error "pass a profile with -p profile-path"
-      exit
-    end
-
-    exit unless checkFileExists "provision profile", profile
-
-    outpath = options.out || "~/Desktop/resigned.ipa"
-
     begin
+      path = parse_path(args, "ipa")
 
-      ipa = IpaUtilities.new path
+      unless options.profile
+        say_error "pass a profile with -p profile_path"
+        exit
+      end
 
-      ipa.unzipAndParse
-      ipa.deleteOldSignature
+      profile = parse_path([options.profile], "provision profile")
 
-      parser = ipa.provisionParser
+      output_path = options.out || "~/Desktop/resigned.ipa"
+
+      ipa = IpaParser.new(path)
+      ipa.delete_old_signature
+
+      parser = ipa.provision_parser
 
       puts "Copying the new provision profile to app bundle"
-      system "cp \"#{profile}\" \"Payload/#{ipa.bundleName}/embedded.mobileprovision\""
+      system "cp \"#{profile}\" \"Payload/#{ipa.bundle_name}/embedded.mobileprovision\""
 
       puts "Writing Entitlements.plist"
-      File.write "Entitlements.plist", parser.entitlementForSigning
+      File.write "Entitlements.plist", parser.signing_entitlement
 
-      buildName = parser.isBuildRelease ? "Distribution" : "Development"
-      system "codesign -s \"iPhone #{buildName}: #{parser.teamName} (#{parser.teamIdentifier})\" --entitlements Entitlements.plist \"Payload/DummyApp.app\" -f"
+      build_name = parser.release_build? ? "Distribution" : "Development"
+      system "codesign -s \"iPhone #{build_name}: #{parser.team_name} (#{parser.team_identifier})\" --entitlements Entitlements.plist \"Payload/DummyApp.app\" -f"
 
       puts
-      ipa.zip outpath
+      ipa.zip output_path
 
     ensure
-      ipa.cleanUp
+      ipa.cleanup
     end
   end
 end
 
-def checkArgs args, title
-  if args.nil? || args.empty?
-    say_error "Path to #{title} is required"
-    return nil
-  end
-
-  checkFileExists title, args.first
-end
-
-def checkFileExists title, path
-
-  if !File.exist?path
-    say_error "Couldn't find #{title} with path #{path}"
-    return nil
-  end
+def parse_path(args, title)
+  raise "Path to #{title} is required" if args.nil? || args.empty?
+  path = args.first
+  raise "Couldn't find #{title} with path #{path}" unless File.exist?(path)
 
   path
+end
+
+def print_app_bundle(ipa)
+  puts "______Bundle information______"
+  puts "App bundle name: " + ipa.bundle_name.green
+  print "Verifying app bundle signature: "
+  say ipa.signature_valid? ? "Signature Valid".green : "Signature Not Valid".red + result.red
+end
+
+def verify_certificates(provision_profile, apns_certificate_path)
+  puts "\n______Checking certificates______"
+
+  apns_certificate = SigningIdentity.new(apns_certificate_path)
+
+  if apns_certificate.apns?
+    puts "Certificate Name " + apns_certificate.name.green
+    puts "Certificate Environment: " + "#{apns_certificate.environment}".green
+    puts "Certificate Bundle ID: " + "#{apns_certificate.bundle_id}".green
+
+    str = apns_certificate.bundle_id == provision_profile.bundle_id ? "Yes".green : "No".red
+    puts "Certificate bundleId identical to App bundleId  #{str}"
+
+    same_environment = apns_certificate.production? == provision_profile.production_apns?
+    str = same_environment ? "Yes".green : "No".red
+    puts "Provided certificate correct for the ipa: #{str}"
+
+    unless same_environment
+      puts %{\
+The application was build with a provision profile containing aps-environment \
+in `#{provision_profile.environment}` environment while the passed certificate environment is set \
+to `#{apns_certificate.environment}`\
+           \nTo fix this issue either export the correct \
+iOS Push `#{apns_certificate.environment}` certificate from keychain or rebuild your app \
+with the correct provision profile}.red
+    end
+  else
+    puts "The passed certificate is not an APNS certificate".red
+  end
+end
+
+def search_udid(provision_profile, device_udid)
+  puts "\n______Searching provisioned device______"
+
+  if provision_profile.app_store_build?
+    puts "Distribution build do not contain provisioned devices".red
+  else
+    puts "Embedded provision profile contains " + "#{provision_profile.provisioned_devices.count}".green + " devices"
+    puts provision_profile.provisioned_devices.include?(device_udid) ?
+             "Device with UDID `#{device_udid}` found".green :
+             "Device with UDID `#{device_udid}` not found".red
+  end
+end
+
+def print_provisioned_devices(provision_profile)
+  puts "\n______Provisioned devices______"
+
+  puts "Embedded provision profile contains " + "#{provision_profile.provisioned_devices.count}".green + " devices"
+  puts provision_profile.provisioned_devices
+end
+
+def print_provision_profile(provision_profile)
+  puts "\n______Provision profile information______"
+  puts "App bundle id: " + provision_profile.bundle_id.green
+  puts "Team name: " + provision_profile.team_name.green
+  puts "Profile display name: " + provision_profile.display_name.green
+
+  puts "\n______Build environments______"
+  puts "App environment: " + provision_profile.build_environment.green
+  puts "APNS environment: " + provision_profile.apns_environment.green
+
+  str = provision_profile.apns_and_app_same_environment? ? "Yes".green : "No".red
+  puts "App and APNS on same environment: " + str
+
+  puts "APNS connection gateway: " + provision_profile.apns_gateway.green
+  unless provision_profile.apns_and_app_same_environment?
+    puts %{\
+The application was build with get-task-allow set to `#{provision_profile.task_allow?}` while \
+the aps-environment is set to `#{provision_profile.apns_environment}`, To fix this issue regenerated \
+the provision profile from apple developer then rebuild the app using it}.red
+  end
 end

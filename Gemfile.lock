@@ -1,0 +1,24 @@
+PATH
+  remote: .
+  specs:
+    ipa_utilities (0.1.1)
+      CFPropertyList (~> 2.2)
+      colorize (~> 0.7)
+      commander (~> 4.1)
+      json (~> 1.8)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    CFPropertyList (2.2.8)
+    colorize (0.7.5)
+    commander (4.2.1)
+      highline (~> 1.6.11)
+    highline (1.6.21)
+    json (1.8.1)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  ipa_utilities!

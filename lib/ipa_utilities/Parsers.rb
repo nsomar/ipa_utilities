@@ -1,30 +1,10 @@
-class PemParser
+class SigningIdentity
 
-  def initialize file
-    @identity = PemParser.signingIdentitiesWithFile(file).first
+  def initialize(name)
+    @identity = name
   end
 
-  def name
-    @identity
-  end
-
-  def isAPNS
-    @identity.include?("IOS Push Services")
-  end
-
-  def isProduction
-    !@identity.include?("Development")
-  end
-
-  def enviroment
-    isProduction ? "Production" : "Development (Sandbox)"
-  end
-
-  def bundleID
-    /: (.*?)$/.match(@identity).captures.first
-  end
-
-  def self.signingIdentitiesWithBase64 base64
+  def self.from_base64(base64)
     string = "-----BEGIN CERTIFICATE-----\n"
     string += base64
     string += "-----END CERTIFICATE-----"
@@ -35,104 +15,134 @@ class PemParser
 
     system "rm -rf cer.pem"
 
-    identity = /CN=(.*?),/.match(pem).captures
-    identity
+    SigningIdentity.new(pem[/CN=(.*?),/, 1])
   end
 
-  def self.signingIdentitiesWithFile file
+  def self.from_file(file)
     pem = `openssl x509 -text -in #{file}`
-    identity = /CN=(.*?),/.match(pem).captures
-    identity
+    SigningIdentity.new(pem[/CN=(.*?),/, 1])
   end
+
+  def name
+    @identity
+  end
+
+  def apns?
+    @identity.include?("IOS Push Services")
+  end
+
+  def production?
+    !@identity[/[Development|Developer]/]
+  end
+
+  def environment
+    if apns?
+      production? ? "Production" : "Development (Sandbox)"
+    else
+      production? ? "Production" : "Development"
+    end
+  end
+
+  def display_name
+    @identity[/: (.*?)$/, 1]
+  end
+
 end
 
-class ProvisionParser
+class ProvisionProfile
 
-  def initialize provisionPath
-    @provisionPath = provisionPath
-    parse
-  end
-
-  def parse
-    # read mobileprovision and convert it to plist
-    `security cms -D -i #{@provisionPath} > tmp.plist`
-
-    # Get info from plist
-    plist = CFPropertyList::List.new
-    plist = CFPropertyList::List.new(:file => "tmp.plist")
-    @data = CFPropertyList.native_types(plist.value)
+  def initialize(provision_path)
+    @provision_path = provision_path
+    @data = CFPropertyList.native_types(read_profile)
   end
 
   def uuid
     @data["UUID"]
   end
 
-  def signingIdentities
-
-    arr = []
-
-    certificates.each do |var|
-      arr << PemParser.signingIdentitiesWithBase64(Base64.encode64(var))
-    end
-
-    arr
+  def signing_identities
+    certificates.map { |identity| SigningIdentity.from_base64(Base64.encode64(identity)) }
   end
 
   def certificates
     @data["DeveloperCertificates"]
   end
 
-  def provisionedDevices
+  def provisioned_devices
     @data["ProvisionedDevices"]
   end
 
-  def isAPNSProduction
+  def production_apns?
     @data["Entitlements"]["aps-environment"] == "production"
   end
 
-  def isBuildRelease
-    @data["Entitlements"]["get-task-allow"] == false
+  def release_build?
+    !@data["Entitlements"]["get-task-allow"]
   end
 
-  def isBuildDistro
-    @data["ProvisionedDevices"].nil?
+  def task_allow?
+    @data["Entitlements"]["get-task-allow"]
   end
 
-  def isAPNSandAppSameEnviroment
-    isBuildRelease == isAPNSProduction
+  def app_store_build?
+    provisioned_devices.nil?
   end
 
-  def appBundleID
-    var = @data["Entitlements"]["application-identifier"]
-    var.slice!(@data["TeamIdentifier"].first + ".")
-    var
+  def apns_and_app_same_environment?
+    release_build? == production_apns?
   end
 
-  def teamName
+  def bundle_id
+    identifier = @data["Entitlements"]["application-identifier"]
+    identifier[/#{team_identifier}\.(.*)/, 1]
+  end
+
+  def team_name
     @data["TeamName"]
   end
 
-  def teamIdentifier
+  def display_name
+    @data["Name"]
+  end
+
+  def team_identifier
     @data["Entitlements"]["com.apple.developer.team-identifier"]
   end
 
-  def apnsEnviroment
-    isAPNSProduction ? "Production" : "Development (Sandbox)"
+  def apns_environment
+    production_apns? ? "Production" : "Development (Sandbox)"
   end
 
-  def buildEnviroment
-    if isBuildRelease
-      isBuildDistro ? "Distribution" : "AdHoc"
+  def apns_gateway
+    production_apns? ? "gateway.push.apple.com:2195" : "gateway.sandbox.push.apple.com:2195"
+  end
+
+  def build_environment
+    if release_build?
+      app_store_build? ? "Distribution" : "AdHoc"
     else
       "Development"
     end
   end
 
-  def entitlementForSigning
-    filePath = File.expand_path "#{__FILE__}/../../resources/Original.Entitlements.plist"
-    file = File.read filePath
-    file.sub! "BUNDLE_ID", "#{teamIdentifier}.#{appBundleID}"
-    file.sub! "GET_TASK_ALLOW", isBuildRelease ? "false" : "true"
+  def signing_entitlement
+    file_path = File.expand_path("#{__FILE__}/../../resources/Original.Entitlements.plist")
+    file = File.read(file_path)
+    file.sub! "BUNDLE_ID", "#{team_identifier}.#{bundle_id}"
+    file.sub! "GET_TASK_ALLOW", release_build? ? "false" : "true"
   end
 
+  private
+
+  def read_profile
+    cmd = "security cms -D -i #{@provision_path} > tmp.plist"
+    say cmd if $verbose
+    system(cmd)
+
+    # Get info from plist
+    plist = CFPropertyList::List.new(:file => "tmp.plist")
+    system("rm tmp.plist")
+
+    plist.value
+  end
 end
