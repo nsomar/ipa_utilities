@@ -28,12 +28,12 @@ class IpaParser
   def zip(path)
     say "Zipping " + @ipa_path.green if $verbose
     system "zip -qr \"_new.ipa\" Payload"
-    system "cp _new.ipa #{path}"
+    system "cp _new.ipa '#{path}'"
     say "Resigned ipa saved at " + path.green
   end
 
   def cleanup
-    system "rm -rf #{zip_out_path}"
+    system "rm -rf '#{zip_out_path}'"
     say "Deleting directory #{zip_out_path}" if $verbose
   end
 
@@ -51,7 +51,7 @@ class IpaParser
 
   def unzip
     say "Unzipping '#{@ipa_path.green}' to '#{zip_out_path}'"  if $verbose
-    system "unzip #{@ipa_path} -d #{zip_out_path} | logger -t ipa_utilities"
+    system "unzip '#{@ipa_path}' -d '#{zip_out_path}' | logger -t ipa_utilities"
 
     change_directory
   end

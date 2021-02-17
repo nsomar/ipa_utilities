@@ -11,7 +11,7 @@ class CodeSigner
   end
 
   def self.signature_valid?(ipa)
-    system("codesign -v #{ipa.app_path} 2>&1")
+    system("codesign -v '#{ipa.app_path}' 2>&1")
     $?.exitstatus == 0
   end
 
@@ -48,7 +48,7 @@ class CodeSigner
   end
 
   def delete_old_signature
-    system "rm -rf #{@app_path}/_CodeSignature"
+    system "rm -rf '#{@app_path}/_CodeSignature'"
     puts "Deleting old code sign file" if $verbose
   end
 
