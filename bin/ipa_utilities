@@ -64,7 +64,7 @@ command :convert do |c|
     begin
 
       puts "\nConverting P12 to Pem"
-      system "openssl pkcs12 -in #{path} -out #{output_path} -nodes -clcerts"
+      system "openssl pkcs12 -in '#{path}' -out '#{output_path}' -nodes -clcerts"
       output("Pem saved at ", output_path)
 
     ensure

@@ -51,6 +51,8 @@ end
 
 class ProvisionProfile
 
+  attr_reader :provision_path
+
   def initialize(provision_path)
     @provision_path = provision_path
     @data = CFPropertyList.native_types(read_profile)
@@ -138,7 +140,7 @@ class ProvisionProfile
   private
 
   def read_profile
-    cmd = "security cms -D -i #{@provision_path} > tmp.plist"
+    cmd = "security cms -D -i '#{@provision_path}' > tmp.plist"
     say cmd if $verbose
     system(cmd)
 
